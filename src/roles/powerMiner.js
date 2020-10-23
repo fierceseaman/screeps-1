@@ -28,7 +28,7 @@ var rPM = {
             }
         }
 
-        const flagName = creep.memory.city + "powerMine"
+        const flagName = creep.memory.flag || creep.memory.city + "powerMine"
         if(!Memory.flags[flagName]){
             creep.suicide()
             medic.suicide()
@@ -86,7 +86,8 @@ var rPM = {
             rBr.medicMove(creep, medic)
         }
         if(bank.pos.isNearTo(creep.pos)){
-            creep.attack(bank)
+            if(creep.hits == creep.hitsMax)
+                creep.attack(bank)
             medic.heal(creep)
         }
         rPM.summonRunners(creep, bank)

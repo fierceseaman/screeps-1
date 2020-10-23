@@ -75,6 +75,51 @@ var rQ = {
             creep.memory.state = CS.FORM
         }
     },
+
+    reform: function(quad, creep){
+        const matrix = rQ.getRoomMatrix(creep.pos.roomName)
+        let formPoint = null
+        let range = 0
+        while(!formPoint){
+            for(let i = Math.max(creep.pos.x - range, 1); i <= Math.min(creep.pos.x + range, 47); i++){
+                for(let j = Math.max(creep.pos.y - range, 1); j <= Math.min(creep.pos.y + range, 47); j++)
+                    if(matrix.get(i,j) < 255){
+                        const look = creep.room.lookForAtArea(LOOK_CREEPS, j, i, j+1, i+1, true)
+                        if(!look.length || !_.find(look, c => !c.creep.my)){
+                            formPoint = new RoomPosition(i, j,creep.pos.roomName)
+                            break
+                        }
+                    }
+                if(formPoint)
+                    break
+            }
+            range++
+        }
+        if(!formPoint){
+            Log.info("no form point")
+            return
+        }
+        for(let i = 0; i < quad.length; i++){
+            const jimmyPos = new RoomPosition(formPoint.x, formPoint.y, formPoint.roomName)
+            switch(i){
+            case 0:
+                break
+            case 1:
+                jimmyPos.y++
+                break
+            case 2:
+                jimmyPos.x++
+                jimmyPos.y++
+                break
+            case 3:
+                jimmyPos.x++
+                break
+            }
+            new RoomVisual(creep.room.name).text(i,jimmyPos)
+            if(quad[i].pos.isEqualTo(jimmyPos))
+                motion.newMove(quad[i], jimmyPos)
+        }
+    },
     
     formUp: function(creep){
         //maybe creeps could make sure that their entire squad is spawned until determining a captain and forming up, until then
@@ -106,7 +151,7 @@ var rQ = {
             }
             let inLine = 0
             if(!creep.pos.isEqualTo(formPos)){
-                creep.moveTo(formPos)
+                motion.newMove(creep, formPos)
             } else {
                 inLine++
             }
@@ -169,6 +214,9 @@ var rQ = {
 
         const status = rQ.getQuadStatus(quad)
 
+        if(!status)
+            rQ.reform(quad, creep)
+
         const target = Game.getObjectById(creep.memory.target)
 
         for(let i = 0; i < quad.length; i++){
@@ -185,19 +233,19 @@ var rQ = {
         rQ.shoot(everythingByRoom, target)
 
         let needRetreat = rQ.heal(quad, everythingByRoom)//if below certain health thresholds, we might need to retreat
-        if(!needRetreat){
+        if(!needRetreat && status){
             needRetreat = rQ.checkDamage(quad, everythingByRoom)
         }
 
         let retreated = false
-        if(needRetreat){
+        if(needRetreat && status){
             retreated = rQ.attemptRetreat(quad, everythingByRoom, status)
             //retreat may fail if there is nothing to retreat from
             //although it might be smart to move to a checkpoint if there is nothing to retreat from
         }
 
         //if we didn't retreat, move to target or rally point
-        if(!retreated){
+        if(!retreated && status){
             rQ.advance(creep, quad, everythingByRoom, target, status)
         }
 
@@ -687,7 +735,7 @@ var rQ = {
             for(let i = 0; i < quad.length; i++){
                 quad[i].move(direction)
             }
-        } else if(!status.roomEdge){//if not moving do an idle dance?
+        } else if(!status.roomEdge && (Game.cpu.bucket > 9000 || _.find(quad, c => c.hits < c.hitsMax))){//if not moving do an idle dance?
             const nextLocation = Math.floor(Math.random() * 3) + 1//1, 2, or 3
             for(let i = 0; i < quad.length; i++){
                 let nextCreep = i + nextLocation
@@ -797,16 +845,11 @@ var rQ = {
                         for(let j = -1; j < 2; j++){
                             if(leader.pos.x + i > 0 && leader.pos.x + i < 50 && leader.pos.y + j > 0 && leader.pos.y + j < 50){
                                 const direction = leader.pos.getDirectionTo(new RoomPosition(leader.pos.x + i, leader.pos.y + j, roomName))
-                                let tolerance = 1//TODO: test with tolerance always at 1, it might work out
-                                if(status.sameRoom){
-                                    tolerance = 1
-                                }
+                                const tolerance = 1
                                 if(Math.abs(direction - status.roomEdge) != 4 && Math.abs(direction - status.roomEdge) > tolerance && (!tolerance || Math.abs(direction - status.roomEdge) != 7)){
                                     //because TOP == 1 and TOP_LEFT == 8, a difference of 7 actually signals adjacency
                                     //unwalkable
-                                    if(costs){
-                                        costs.set(leader.pos.x + i, leader.pos.y + j, 255)
-                                    }
+                                    costs.set(leader.pos.x + i, leader.pos.y + j, 255)
                                 }
                             }
                         }
@@ -816,17 +859,18 @@ var rQ = {
                     //if we have vision, add creeps to matrix, otherwise just return it plain
                     const quadNames = []
                     for(let i = 0; i < quad.length; i++){
-                        quadNames.push(quad[i].name)
+                        quadNames.push(quad[i].id)
                     }
                     for (const creep of Game.rooms[roomName].find(FIND_CREEPS)) {
                         if(!_(quad).find(member => member.pos.inRangeTo(creep.pos, 8))
                             || (!settings.allies.includes(creep.owner.username) && !_(quad).find(member => member.pos.inRangeTo(creep.pos, 3)))){
                             continue
                         }
-                        if(!quadNames.includes(creep.name)){
+                        if(!quadNames.includes(creep.id)){
                             //quad cannot move to any pos that another creep is capable of moving to
-                            const offset = creep.getActiveBodyparts(ATTACK) && !creep.fatigue ? 3 :
-                                !creep.fatigue || creep.getActiveBodyparts(ATTACK) ? 2 : 1
+                            const attackThreat = u.getCreepDamage(creep, ATTACK) > rQ.getDamageTolerance(quad)
+                            const offset = attackThreat && !creep.fatigue ? 3 :
+                                attackThreat ? 2 : 1
                             for(let i = Math.max(0 , creep.pos.x - offset); i < Math.min(50, creep.pos.x + offset); i++){
                                 for(let j = Math.max(0 , creep.pos.y - offset); j < Math.min(50, creep.pos.y + offset); j++){
                                     costs.set(i, j, 255)
@@ -923,7 +967,16 @@ var rQ = {
                 break
             }
         }
+        if(!leader)
+            return null
+        if(!roomEdge)
+            for(let i = 0; i < quad.length; i++)
+                for(let j = i;j < quad.length; j++)
+                    if(!quad[i].pos.isNearTo(quad[j].pos))
+                        return null
+
         const result = {}
+
         result.leader = leader
         result.roomEdge = roomEdge
         //if all of the creeps in the squad are in the highest room, they must all be in the same room

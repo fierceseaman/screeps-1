@@ -32,7 +32,7 @@ function makeCreeps(role, city, unhealthyStore, creepWantsBoosts, flag = null) {
     var energyToSpend = unhealthyStore ? room.energyAvailable :
         room.energyCapacityAvailable
 
-    const weHaveBoosts = u.boostsAvailable(role)
+    const weHaveBoosts = u.boostsAvailable(role, room)
     const boosted = creepWantsBoosts && weHaveBoosts
 
     const recipe = types.getRecipe(role.type, energyToSpend, room, boosted, flag)
@@ -409,7 +409,11 @@ function updateColonizers(city, memory, claimRoom, unclaimRoom) {
     const roomName = Game.spawns[city].room.name
     if(roomName == claimRoom){
         const flag = Memory.flags.claim
-        Memory.flags[city + "harass"] = new RoomPosition(25, 25, Memory.flags.claim.roomName)
+        const harassFlagName = u.generateFlagName(city + "harass")
+        if(!_.find(Object.keys(Memory.flags), f => Memory.flags[f].roomName == Memory.flags.claim.roomName && f.includes("harass"))){
+            Memory.flags[harassFlagName] = new RoomPosition(25, 25, Memory.flags.claim.roomName)
+            Memory.flags[harassFlagName].boosted = true
+        }
         if(Game.spawns[city].room.controller.level < 7){
             memory[rSB.name] = 4
         } else if (flag && Game.rooms[flag.roomName] && Game.rooms[flag.roomName].controller && Game.rooms[flag.roomName].controller.level > 6) {
@@ -447,7 +451,7 @@ function updateDefender(spawn, rcl) {
         for(const hostile of hostiles){
             const hasTough = hostile.getActiveBodyparts(TOUGH) > 0
             const isBoosted = _(hostile.body).find(part => part.boost)
-            if (isBoosted && (hasTough || isBoosted.boost.includes("X"))) {
+            if (isBoosted && (hasTough || isBoosted.boost.includes("X") || rcl < 8)) {
                 //add a defender to spawn queue if we don't have enough
                 //make sure to count spawned defenders as well as queued
                 const spawns = room.find(FIND_MY_SPAWNS)
@@ -545,7 +549,7 @@ function updateUpgrader(city, controller, memory, rcl8, creeps, rcl) {
     if (rcl8){
         const bucketThreshold = settings.bucket.upgrade + settings.bucket.range * cityFraction(room.name)
         const haveEnoughCpu = Game.cpu.bucket > bucketThreshold
-        if (controller.ticksToDowngrade < 100000 
+        if (controller.ticksToDowngrade < CONTROLLER_DOWNGRADE[rcl]/2 
             || (controller.room.storage.store.energy > settings.energy.rcl8upgrade && haveEnoughCpu)){
             scheduleIfNeeded(rU.name, 1, true, Game.spawns[city], creeps)
         }
@@ -568,7 +572,7 @@ function updateUpgrader(city, controller, memory, rcl8, creeps, rcl) {
             for(let i = 0; i < needed; i++){
                 sq.schedule(Game.spawns[city], rU.name, rcl >= 6)
             }
-        } else if (controller.ticksToDowngrade < 1000){
+        } else if (controller.ticksToDowngrade < CONTROLLER_DOWNGRADE[rcl]/2){
             sq.schedule(Game.spawns[city], rU.name, rcl >= 6)
         }
     }
@@ -678,7 +682,8 @@ function updateStorageLink(spawn, memory, structures) {
 function updateHighwayCreep(flagName, spawn, creeps, role) {
     const flagNames = _.filter(Object.keys(Memory.flags), flag => flag.includes(flagName))
     for(const flag of flagNames){
-        scheduleIfNeeded(role, 1, role != rH.name, spawn, creeps, flag)
+        const boosted = role != rH.name || Memory.flags[flag].boosted
+        scheduleIfNeeded(role, 1, boosted, spawn, creeps, flag)
     }
 }
 
